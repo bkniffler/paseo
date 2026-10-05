@@ -6,6 +6,11 @@ import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
+  expectWorkspaceHoverCardClosed,
+  expectWorkspaceHoverCardOpen,
+  expectWorkspaceHoverCardStaysOpen,
+  focusWorkspaceRowWithKeyboard,
+  movePointerAwayFromWorkspaceHoverCard,
   openMobileAgentSidebar,
   pinWorkspaceFromSidebar,
 } from "../support/helpers/sidebar";
@@ -406,31 +411,40 @@ test.describe("Sidebar workspace list", () => {
 
   test("workspace hover card closes when the pointer leaves a clicked row", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-click-leave-" });
-    const hoverCard = page.getByTestId("workspace-hover-card");
 
     try {
       await gotoAppShell(page);
       await waitForSidebarProject(page, path.basename(workspace.repoPath));
       const row = await openWorkspaceFromSidebar(page, workspace.workspaceId);
-      await page.mouse.move(1200, 400, { steps: 10 });
-      await expect(hoverCard).toHaveCount(0);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
 
       await row.click();
       await expect(row).toBeFocused();
-      await expect(hoverCard).toBeVisible();
-      await page.mouse.move(1200, 400, { steps: 10 });
-      await expect(hoverCard).toHaveCount(0);
-      await expect(row).toBeFocused();
+      await expectWorkspaceHoverCardOpen(page);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 
-      await page.keyboard.press("Shift+Tab");
-      await page.keyboard.press("Tab");
-      await expect(row).toBeFocused();
-      await expect(hoverCard).toBeVisible();
-      await page.mouse.move(1200, 200, { steps: 10 });
-      await page.waitForTimeout(300);
-      await expect(hoverCard).toBeVisible();
+  test("workspace hover card stays open for a keyboard-focused row", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-keyboard-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      await openWorkspaceFromSidebar(page, workspace.workspaceId);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+
+      await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardStaysOpen(page);
       await page.keyboard.press("Escape");
-      await expect(hoverCard).toHaveCount(0);
+      await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
     }

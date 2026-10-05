@@ -109,6 +109,7 @@ function WebHoverCard({
     if (graceTimerRef.current) return;
     graceTimerRef.current = setTimeout(() => {
       graceTimerRef.current = null;
+      if (keyboardFocusInside()) return;
       setOpen(false);
     }, CLOSE_GRACE_MS);
   }, [keyboardFocusInside]);
