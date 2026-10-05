@@ -18,6 +18,7 @@ export type AgentRunController = Pick<
   AgentManager,
   | "getAgent"
   | "tryRunOutOfBand"
+  | "tryQueuePromptDuringCompaction"
   | "hasInFlightRun"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
@@ -28,13 +29,14 @@ export type AgentRunController = Pick<
 
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
+  onQueuedDelivery?: () => void;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
 }
 
-export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
+export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started" | "queued";
 
 async function steerOrReplaceActiveRun(
   agentManager: AgentRunController,
@@ -114,6 +116,18 @@ export async function startAgentRun(
   // intercept lives at this layer so it covers every prompt entrypoint.
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     return { disposition: "out_of_band" };
+  }
+  if (
+    agentManager.tryQueuePromptDuringCompaction({
+      agentId,
+      prompt,
+      options: options?.clearPendingPermissions
+        ? { ...options.runOptions, clearPendingPermissions: true }
+        : options?.runOptions,
+      onDelivered: options?.onQueuedDelivery,
+    })
+  ) {
+    return { disposition: "queued" };
   }
   try {
     return await startAgentRunInner(agentManager, agentId, prompt, logger, options);
@@ -228,6 +242,7 @@ export interface SendPromptToAgentParams {
   /** Prompt to dispatch to the provider (may include image blocks or wrapped text). */
   prompt: AgentPromptInput;
   messageId?: string;
+  onQueuedDelivery?: () => void;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
   /** Optional mode to set on the agent before the run starts. */
@@ -332,6 +347,7 @@ export async function sendPromptToAgent(
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
+    onQueuedDelivery: params.onQueuedDelivery,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
     runOptions,

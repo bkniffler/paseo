@@ -240,6 +240,7 @@ function buildAgentManagerSpies() {
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
+    tryQueuePromptDuringCompaction: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
     streamAgent: vi.fn(() => (async function* noop() {})()),
     waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),
@@ -3698,6 +3699,19 @@ const HELD_TURN_CAPABILITIES = {
  * turn stays running until `finishTurn()` so a caller's bounded wait can run out first.
  */
 class HeldTurnAgentSession implements AgentSession {
+  private compacting = false;
+  interruptCount = 0;
+  isCompacting(): boolean {
+    return this.compacting;
+  }
+  setCompacting(loading: boolean): void {
+    this.compacting = loading;
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      item: { type: "compaction", status: loading ? "loading" : "completed" },
+    });
+  }
   readonly capabilities = HELD_TURN_CAPABILITIES;
   readonly id = randomUUID();
   readonly prompts: string[] = [];
@@ -3786,6 +3800,7 @@ class HeldTurnAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    this.interruptCount += 1;
     const turnId = this.activeTurnId;
     if (!turnId) {
       return;
@@ -3833,6 +3848,68 @@ class HeldTurnAgentClient implements AgentClient {
 describe("send_agent_prompt MCP tool", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
+
+  it("returns queued acceptance and notifies only after the queued prompt's turn", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-child-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "send_agent_prompt");
+      await invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "original",
+        notifyOnFinish: false,
+      });
+      const session = childClient.sessions[0]!;
+      session.setCompacting(true);
+      const sent = await invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "follow up",
+        notifyOnFinish: true,
+      });
+      expect(sent.structuredContent).toMatchObject({
+        success: true,
+        queued: true,
+        status: "running",
+      });
+      expect(session.prompts).toEqual(["original"]);
+      expect(session.interruptCount).toBe(0);
+      session.setCompacting(false);
+      session.finishTurn();
+      await vi.waitFor(() => expect(session.prompts).toEqual(["original", "follow up"]));
+      await agentManager.waitForAgentRunStart(child.id);
+      expect(parentClient.sessions[0]!.prompts).toEqual([]);
+      session.finishTurn();
+      await vi.waitFor(() => expect(parentClient.sessions[0]!.prompts).toHaveLength(1));
+      expect(parentClient.sessions[0]!.prompts[0]).toContain(`Agent ${child.id}`);
+      expect(session.interruptCount).toBe(0);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
 
   it("defaults agent-scoped prompts to background finish notifications", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();

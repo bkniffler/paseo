@@ -1892,6 +1892,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   const PROMPTED_AGENT_NOTIFICATION_GUIDANCE =
     "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
 
+  const QUEUED_AGENT_NOTIFICATION_GUIDANCE =
+    "The prompt is queued until compaction finishes. Its finish notification is armed after delivery. Stop, session closure, or failed compaction cancels pending prompts and records a warning in the target agent's timeline.";
+
   registerTool(
     "send_agent_prompt",
     {
@@ -1902,6 +1905,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       outputSchema: {
         success: z.boolean(),
         status: AgentStatusEnum,
+        queued: z.boolean().optional(),
         lastMessage: z.string().nullable().optional(),
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
         guidance: z.string().optional(),
@@ -1933,12 +1937,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agentStorage,
         agentId,
         prompt,
+        onQueuedDelivery: () => {
+          armFinishNotification();
+        },
         sessionMode,
         logger: childLogger,
       });
 
       // If not running in background, wait for completion
-      if (!background) {
+      if (!background && disposition !== "queued") {
         const result = await waitForAgentWithTimeout(agentManager, agentId, {
           waitForActive: true,
         });
@@ -1965,7 +1972,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         return response;
       }
 
-      const notifying = armFinishNotification();
+      const notifying =
+        disposition === "queued"
+          ? Boolean(notifyOnFinish && callerAgentId)
+          : armFinishNotification();
 
       // Return once the provider has accepted the turn, so the status reports it running.
       if (disposition === "turn_started") {
@@ -1976,9 +1986,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const responseData = {
         success: true,
         status: currentSnapshot?.lifecycle ?? "idle",
+        ...(disposition === "queued" ? { queued: true } : {}),
         lastMessage: null,
         permission: null,
-        ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
+        ...(notifying
+          ? {
+              guidance:
+                disposition === "queued"
+                  ? QUEUED_AGENT_NOTIFICATION_GUIDANCE
+                  : PROMPTED_AGENT_NOTIFICATION_GUIDANCE,
+            }
+          : {}),
       };
       const validJson = ensureValidJson(responseData);
 
