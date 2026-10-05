@@ -1932,36 +1932,54 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         return true;
       }
 
+      let queuedDelivered = false;
+      let queuedWaitTimedOut = false;
+      let settleQueuedDelivery!: (error: Error | null) => void;
+      const queuedDelivery = new Promise<Error | null>((resolve) => {
+        settleQueuedDelivery = resolve;
+      });
+      function notifyAfterBlockingWait(stillQueued: boolean): boolean {
+        if (!queuedWaitTimedOut) return false;
+        if (stillQueued) return Boolean(notifyOnFinish && callerAgentId);
+        return agentManager.getAgent(agentId)?.lifecycle === "running" && armFinishNotification();
+      }
       const { disposition } = await sendPromptToAgent({
         agentManager,
         agentStorage,
         agentId,
         prompt,
         onQueuedDelivery: () => {
-          armFinishNotification();
+          queuedDelivered = true;
+          settleQueuedDelivery(null);
+          if (background || queuedWaitTimedOut) armFinishNotification();
         },
+        onQueuedCanceled: settleQueuedDelivery,
         sessionMode,
         logger: childLogger,
       });
 
       // If not running in background, wait for completion
-      if (!background && disposition !== "queued") {
+      if (!background) {
         const result = await waitForAgentWithTimeout(agentManager, agentId, {
           waitForActive: true,
+          delivery: disposition === "queued" ? queuedDelivery : undefined,
         });
+        queuedWaitTimedOut = result.timedOut;
+        const stillQueued = disposition === "queued" && !queuedDelivered;
         // The wait ran out while the agent keeps working, so its result arrives as a
         // finish notification instead of in this response.
-        const notifying =
-          result.timedOut &&
-          agentManager.getAgent(agentId)?.lifecycle === "running" &&
-          armFinishNotification();
+        const notifying = notifyAfterBlockingWait(stillQueued);
+        const guidance = stillQueued
+          ? QUEUED_AGENT_NOTIFICATION_GUIDANCE
+          : PROMPTED_AGENT_NOTIFICATION_GUIDANCE;
 
         const responseData = {
           success: true,
           status: result.status,
+          ...(stillQueued ? { queued: true } : {}),
           lastMessage: result.lastMessage,
           permission: sanitizePermissionRequest(result.permission),
-          ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
+          ...(notifying ? { guidance } : {}),
         };
         const validJson = ensureValidJson(responseData);
 

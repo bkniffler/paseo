@@ -13,6 +13,7 @@ export interface CompactionPromptDelivery<T> {
 interface CompactionPromptQueuePorts<T> {
   deliver: (input: CompactionPromptDelivery<T>) => Promise<boolean>;
   failed: (input: { agentId: string; error: unknown }) => void;
+  canceled?: (input: { entry: T; error: Error }) => void;
 }
 
 interface EnqueueCompactionPrompt<T> {
@@ -40,10 +41,12 @@ export class CompactionPromptQueue<T> {
     return true;
   }
 
-  cancel(agentId: string): number {
+  cancel(agentId: string, error = new Error("Queued prompt canceled before delivery")): number {
     const queue = this.pending.get(agentId);
     this.pending.delete(agentId);
-    return queue?.entries.length ?? 0;
+    if (!queue) return 0;
+    for (const entry of queue.entries) this.ports.canceled?.({ entry, error });
+    return queue.entries.length;
   }
 
   wake(agentId: string): void {
@@ -77,7 +80,7 @@ export class CompactionPromptQueue<T> {
           if (this.pending.get(agentId) !== queue) return;
           // Acceptance is ambiguous after transport failure. Report it rather
           // than retrying and potentially delivering the same message twice.
-          this.cancel(agentId);
+          this.cancel(agentId, new Error("Queued prompt delivery failed", { cause: error }));
           this.ports.failed({ agentId, error });
           return;
         }

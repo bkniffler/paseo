@@ -39,6 +39,7 @@ test("an ambiguous delivery failure is reported once without retrying or duplica
   const attempted: string[] = [];
   const errors: unknown[] = [];
   const failure = new Error("connection lost after acceptance");
+  const canceled: Array<{ entry: string; error: Error }> = [];
   const queue = new CompactionPromptQueue<string>({
     deliver: async ({ entry: prompt }) => {
       attempted.push(prompt);
@@ -48,6 +49,7 @@ test("an ambiguous delivery failure is reported once without retrying or duplica
       errors.push(error);
       failed.resolve();
     },
+    canceled: (input) => canceled.push(input),
   });
   queue.enqueue({ agentId: "agent", entry: "first", compacting: true });
   queue.enqueue({ agentId: "agent", entry: "second", compacting: false });
@@ -55,6 +57,12 @@ test("an ambiguous delivery failure is reported once without retrying or duplica
   queue.wake("agent");
   expect(attempted).toEqual(["first"]);
   expect(errors).toEqual([failure]);
+  expect(
+    canceled.map(({ entry, error }) => ({ entry, message: error.message, cause: error.cause })),
+  ).toEqual([
+    { entry: "first", message: "Queued prompt delivery failed", cause: failure },
+    { entry: "second", message: "Queued prompt delivery failed", cause: failure },
+  ]);
   expect(queue.enqueue({ agentId: "agent", entry: "new request", compacting: false })).toBe(false);
 });
 

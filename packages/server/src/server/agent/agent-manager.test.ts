@@ -737,6 +737,68 @@ test("a queued compaction prompt waits for turn completion when steering is unav
   }
 });
 
+test.each(["turn_failed", "turn_canceled"] as const)(
+  "a queued prompt survives %s after successful compaction when steering is unavailable",
+  async (terminalType) => {
+    const { manager, agentId, session, close } = await compactionScenario();
+    try {
+      session.steerResult = "unavailable";
+      session.setCompacting(true);
+      expect(
+        await startAgentRun(manager, agentId, "later", logger, { replaceRunning: true }),
+      ).toEqual({ disposition: "queued" });
+      session.setCompacting(false);
+      await vi.waitFor(() => expect(session.steerCount).toBeGreaterThan(0));
+      session.pushEvent({
+        type: terminalType,
+        provider: "codex",
+        turnId: "active-turn-1",
+        error: "original turn failed after compaction",
+      });
+      await vi.waitFor(() => expect(session.startPrompts).toEqual(["original", "later"]));
+      expect(session.interruptCount).toBe(0);
+      expect(manager.getTimeline(agentId).filter((item) => item.type === "notification")).toEqual(
+        [],
+      );
+    } finally {
+      await close();
+    }
+  },
+);
+
+test.each(["turn_failed", "turn_canceled"] as const)(
+  "%s during active compaction cancels the queued prompt",
+  async (terminalType) => {
+    const { manager, agentId, session, close } = await compactionScenario();
+    const canceled = deferred<Error>();
+    try {
+      session.setCompacting(true);
+      await startAgentRun(manager, agentId, "do not deliver", logger, {
+        replaceRunning: true,
+        onQueuedCanceled: (error) => canceled.resolve(error),
+      });
+      session.pushEvent({
+        type: terminalType,
+        provider: "codex",
+        turnId: "active-turn-1",
+        error: "compaction terminated",
+      });
+      expect((await canceled.promise).message).toBe("Queued prompt canceled before delivery");
+      session.setCompacting(false);
+      await manager.flush();
+      expect(session.startPrompts).toEqual(["original"]);
+      expect(session.delivered).toEqual([]);
+      expect(manager.getTimeline(agentId)).toContainEqual({
+        type: "notification",
+        level: "warning",
+        message: "1 queued message(s) canceled before delivery.",
+      });
+    } finally {
+      await close();
+    }
+  },
+);
+
 test("queued finish notifications arm after actual delivery, not the original turn", async () => {
   const { manager, agentId, session, close } = await compactionScenario();
   const delivered = deferred<void>();

@@ -1,6 +1,6 @@
 # Incoming prompts during Codex compaction
 
-Verified on macOS on 2026-10-05, against baseline `f02cc16` and native `codex-cli 0.159.2`.
+Initial verification on macOS on 2026-10-05, against baseline `f02cc16` and native `codex-cli 0.159.2`. Review corrections verified on 2026-10-06 against PR head `1cd3932`.
 
 ## Reported failure and confirmed cause
 
@@ -8,7 +8,9 @@ A production Paseo 0.11.0-beta.3 session repeatedly aborted automatic Codex comp
 
 Separately, the Codex adapter completed pending compaction markers before checking whether the native turn had failed or been interrupted. That made an aborted compaction look successfully compacted in the timeline. Repeated provider-driven compaction without incoming updates is not explained by this evidence.
 
-The new regression test was run with `agent-manager.ts` and `agent-prompt.ts` temporarily restored to baseline, then the edited bytes were restored. It failed on the first compacting update:
+Review identified two additional causes in the queued path. MCP excluded `queued` prompts from the blocking wait, so a top-level caller returned before its prompt ran and received no answer. The manager also canceled pending prompts on every failed or canceled turn, including a turn ending after compaction had already succeeded. When steering was unavailable, that discarded a prompt that should have started next. New regressions failed with each affected implementation from `1cd3932` for the reported reason; raw output is in [review-checks.txt](review-checks.txt).
+
+The original regression test was run with `agent-manager.ts` and `agent-prompt.ts` temporarily restored to baseline, then the edited bytes were restored. It failed on the first compacting update:
 
 ```text
 FAIL src/server/agent/agent-manager.test.ts > queues incoming prompts through auto compaction and steers them FIFO
@@ -21,7 +23,7 @@ Tests       1 failed | 197 skipped (198)
 
 ## Result and automated coverage
 
-A runtime FIFO intercepts the shared prompt dispatcher before steer/replacement, including manual `/compact` admission before native events arrive. Messages resume in order after compaction, steering the current turn or waiting for its completion if steering is unavailable. No queued message uses interrupt-and-replace. Explicit Stop, runtime closure, or an unsuccessful active compaction cancels pending messages with a timeline warning. Ambiguous delivery failures are reported without automatic retries. Finish notifications are armed only after delivery; the original turn cannot prematurely satisfy the queued task.
+A runtime FIFO intercepts the shared prompt dispatcher before steer/replacement, including manual `/compact` admission before native events arrive. Messages resume in order after compaction, steering the current turn or waiting for its completion if steering is unavailable. No queued message uses interrupt-and-replace. Explicit Stop, runtime closure, or an unsuccessful active compaction cancels pending messages with a timeline warning. Ambiguous delivery failures are reported without automatic retries. Finish notifications are armed only after delivery; the original turn cannot prematurely satisfy the queued task. Blocking MCP calls wait for delivery before waiting for the resulting turn, sharing the existing 30-second budget. Queue cancellation or ambiguous delivery failure settles that wait with an error. A timeout before delivery reports `queued: true` and leaves an agent-scoped finish notification deferred until delivery. Failed or canceled turns after successful compaction release pending prompts into the next turn; they no longer cancel the queue.
 
 The focused suites exercised real manager/storage code and the actual Codex adapter with deterministic native events. An HTTP test additionally ran an isolated daemon and MCP client over Streamable HTTP, submitting two updates during native compaction and asserting zero `turn/interrupt` requests and ordered `turn/steer` inputs afterward. The native app-server transport in that HTTP test is a fixture; it is not a live-provider claim.
 
@@ -40,7 +42,9 @@ npx vitest run src/server/agent/mcp-parity.e2e.test.ts -t 'HTTP MCP queues' --ma
 npx vitest run src/server/agent/providers/codex-app-server-agent.real.e2e.test.ts -t 'delivers a queued prompt after real manual' --maxWorkers=1 --bail=1
 ```
 
-Total: **630 distinct focused tests passed in the commands above**. Selected raw runner output and live event output are in [checks.txt](checks.txt).
+Review corrections: **336 tests passed** across the three changed suites (`agent-manager.test.ts`, `mcp-server.test.ts`, and `compaction-prompt-queue.test.ts`). Eleven new cases cover top-level and explicitly blocking agent-scoped answers, Stop, closure, unsuccessful compaction, queued timeout notification timing, and failed/canceled turns before and after compaction. The existing ambiguous-delivery test now verifies that every pending delivery wait receives an error. The MCP suite's 131 tests passed again after the final implementation edit. Repository-wide lint, the server build, server typecheck, and changed-file format checks passed; full typecheck retains the two local errors listed below. Commands and output: [review-checks.txt](review-checks.txt). These corrections were fixture-tested on macOS; no additional live-provider or UI run was performed.
+
+Initial verification: **630 distinct focused tests passed in the commands above**. Selected raw runner output and live event output are in [checks.txt](checks.txt).
 
 The live check used the installed native Codex binary and existing subscription authentication, an empty temporary directory, and a separate app-server process. It seeded a conversation with `SEED_OK`, admitted `/compact`, immediately submitted a replacing follow-up, observed `queued`, then observed loading/completed compaction, a normal terminal event, and the follow-up answer `QUEUE_DELIVERED_OK`. No turn was canceled or failed. This was run once as an ad hoc program and again as the committed real-provider regression test. It verifies manual compaction with a live provider; automatic compaction injection and failure paths use deterministic fixtures.
 

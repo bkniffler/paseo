@@ -719,6 +719,7 @@ interface QueuedCompactionPrompt {
   prompt: AgentPromptInput;
   options?: AgentSteerOptions;
   onDelivered?: () => void;
+  onCanceled?: (error: Error) => void;
 }
 
 export interface QueuePromptDuringCompactionInput extends QueuedCompactionPrompt {
@@ -738,6 +739,7 @@ export class AgentManager {
   private readonly compactingAgents = new Set<string>();
   private readonly compactionPrompts = new CompactionPromptQueue<QueuedCompactionPrompt>({
     deliver: (input) => this.deliverCompactionPrompt(input),
+    canceled: ({ entry, error }) => entry.onCanceled?.(error),
     failed: ({ agentId, error }) => {
       this.logger.error({ agentId, err: error }, "Queued compaction prompt delivery failed");
       this.reportCompactionQueue({
@@ -4358,7 +4360,9 @@ export class AgentManager {
       if (event.item.outcome) this.cancelCompactionPrompts(agentId);
     }
     if (event.type === "turn_canceled" || event.type === "turn_failed") {
-      this.cancelCompactionPrompts(agentId);
+      // A terminal event after successful compaction releases prompts that could
+      // not be steered. Only termination of the compaction itself cancels them.
+      if (this.compactingAgents.has(agentId)) this.cancelCompactionPrompts(agentId);
       this.compactingAgents.delete(agentId);
     }
     if (

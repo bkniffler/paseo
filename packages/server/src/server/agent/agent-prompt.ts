@@ -30,6 +30,7 @@ export type AgentRunController = Pick<
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
   onQueuedDelivery?: () => void;
+  onQueuedCanceled?: (error: Error) => void;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
@@ -125,6 +126,7 @@ export async function startAgentRun(
         ? { ...options.runOptions, clearPendingPermissions: true }
         : options?.runOptions,
       onDelivered: options?.onQueuedDelivery,
+      onCanceled: options?.onQueuedCanceled,
     })
   ) {
     return { disposition: "queued" };
@@ -243,6 +245,7 @@ export interface SendPromptToAgentParams {
   prompt: AgentPromptInput;
   messageId?: string;
   onQueuedDelivery?: () => void;
+  onQueuedCanceled?: (error: Error) => void;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
   /** Optional mode to set on the agent before the run starts. */
@@ -348,6 +351,7 @@ export async function sendPromptToAgent(
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
     onQueuedDelivery: params.onQueuedDelivery,
+    onQueuedCanceled: params.onQueuedCanceled,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
     runOptions,
