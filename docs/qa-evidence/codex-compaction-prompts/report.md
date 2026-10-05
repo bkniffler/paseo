@@ -53,7 +53,7 @@ The compaction wire status remains `loading | completed`. Optional `outcome: can
 - `packages/app/src/components/draggable-list.native.tsx:122`: installed native list dependency does not accept `dragGestureHostPresented`.
 - `packages/website`: missing `@cloudflare/workers-types` in the local installation.
 
-The commit hook's repository-wide typecheck job was excluded after recording those failures; its changed-file lint and format jobs still ran. The production desktop application and daemon were not replaced or restarted.
+No pre-commit hook is installed in this checkout; typechecking, lint, and formatting checks were run directly. The production desktop application and daemon were not replaced or restarted.
 
 ## Platform coverage and remaining verification
 
