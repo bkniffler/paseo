@@ -404,6 +404,38 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
+  test("workspace hover card closes when the pointer leaves a clicked row", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-click-leave-" });
+    const hoverCard = page.getByTestId("workspace-hover-card");
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      const row = await openWorkspaceFromSidebar(page, workspace.workspaceId);
+      await page.mouse.move(1200, 400, { steps: 10 });
+      await expect(hoverCard).toHaveCount(0);
+
+      await row.click();
+      await expect(row).toBeFocused();
+      await expect(hoverCard).toBeVisible();
+      await page.mouse.move(1200, 400, { steps: 10 });
+      await expect(hoverCard).toHaveCount(0);
+      await expect(row).toBeFocused();
+
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Tab");
+      await expect(row).toBeFocused();
+      await expect(hoverCard).toBeVisible();
+      await page.mouse.move(1200, 200, { steps: 10 });
+      await page.waitForTimeout(300);
+      await expect(hoverCard).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(hoverCard).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("marks a finished workspace unread until it is opened again", async ({ page }) => {
     const workspace = await seedMockAgentWorkspace({
       repoPrefix: "sidebar-mark-unread-",
