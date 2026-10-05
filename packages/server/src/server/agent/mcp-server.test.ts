@@ -3869,6 +3869,12 @@ class HeldTurnAgentClient implements AgentClient {
   }
 }
 
+interface QueuedPromptCancellationInput {
+  agentManager: AgentManager;
+  agentId: string;
+  session: HeldTurnAgentSession;
+}
+
 describe("send_agent_prompt MCP tool", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
@@ -3935,9 +3941,16 @@ describe("send_agent_prompt MCP tool", () => {
     }
   });
 
-  it.each(["top-level", "agent-scoped"] as const)(
-    "waits for queued delivery and its answer for a blocking %s caller",
-    async (caller) => {
+  it.each([
+    { caller: "top-level", resolveCaller: (_agentId: string) => undefined, blockingInput: {} },
+    {
+      caller: "agent-scoped",
+      resolveCaller: (agentId: string) => agentId,
+      blockingInput: { background: false },
+    },
+  ])(
+    "waits for queued delivery and its answer for a blocking $caller caller",
+    async ({ resolveCaller, blockingInput }) => {
       const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-blocking-"));
       const storage = new AgentStorage(join(workdir, "agents"), logger);
       const client = new HeldTurnAgentClient("codex", true);
@@ -3960,7 +3973,7 @@ describe("send_agent_prompt MCP tool", () => {
         const server = await createAgentMcpServer({
           agentManager,
           agentStorage: storage,
-          callerAgentId: caller === "agent-scoped" ? parent.id : undefined,
+          callerAgentId: resolveCaller(parent.id),
           providerSnapshotManager: createOpenCodeManager().manager,
           logger,
         });
@@ -3978,7 +3991,7 @@ describe("send_agent_prompt MCP tool", () => {
         const pending = invokeToolWithParsedInput(tool, {
           agentId: target.id,
           prompt: "follow up",
-          ...(caller === "agent-scoped" ? { background: false } : {}),
+          ...blockingInput,
         }).then((result) => {
           returned = true;
           return result;
@@ -4005,54 +4018,72 @@ describe("send_agent_prompt MCP tool", () => {
     },
   );
 
-  it.each(["stop", "close", "failed", "canceled"] as const)(
-    "reports queued cancellation to a blocking caller on %s",
-    async (reason) => {
-      const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-canceled-"));
-      const storage = new AgentStorage(join(workdir, "agents"), logger);
-      const client = new HeldTurnAgentClient("codex", true);
-      const agentManager = new AgentManager({
-        clients: { codex: client },
-        registry: storage,
+  it.each([
+    {
+      reason: "stop",
+      cancel: async ({ agentManager, agentId }: QueuedPromptCancellationInput) => {
+        await agentManager.cancelAgentRun(agentId);
+      },
+    },
+    {
+      reason: "close",
+      cancel: async ({ agentManager, agentId }: QueuedPromptCancellationInput) => {
+        await agentManager.closeAgent(agentId);
+      },
+    },
+    {
+      reason: "failed",
+      cancel: ({ session }: QueuedPromptCancellationInput) =>
+        session.setCompacting(false, "failed"),
+    },
+    {
+      reason: "canceled",
+      cancel: ({ session }: QueuedPromptCancellationInput) =>
+        session.setCompacting(false, "canceled"),
+    },
+  ])("reports queued cancellation to a blocking caller on $reason", async ({ cancel }) => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-canceled-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+    });
+    try {
+      const target = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        providerSnapshotManager: createOpenCodeManager().manager,
         logger,
       });
-      try {
-        const target = await agentManager.createAgent(
-          { provider: "codex", cwd: existingCwd },
-          undefined,
-          { workspaceId: "wks_parent" },
-        );
-        const server = await createAgentMcpServer({
-          agentManager,
-          agentStorage: storage,
-          providerSnapshotManager: createOpenCodeManager().manager,
-          logger,
-        });
-        const tool = registeredTool(server, "send_agent_prompt");
-        await invokeToolWithParsedInput(tool, {
-          agentId: target.id,
-          prompt: "original",
-          background: true,
-        });
-        const session = client.sessions[0]!;
-        session.setCompacting(true);
-        const checks = session.compactionChecks;
-        const pending = invokeToolWithParsedInput(tool, {
-          agentId: target.id,
-          prompt: "follow up",
-        });
-        const canceled = expect(pending).rejects.toThrow("Queued prompt canceled before delivery");
-        await vi.waitFor(() => expect(session.compactionChecks).toBeGreaterThan(checks));
-        if (reason === "stop") await agentManager.cancelAgentRun(target.id);
-        else if (reason === "close") await agentManager.closeAgent(target.id);
-        else session.setCompacting(false, reason);
-        await canceled;
-        expect(session.prompts).toEqual(["original"]);
-      } finally {
-        await removeAgentStateDir(agentManager, storage, workdir);
-      }
-    },
-  );
+      const tool = registeredTool(server, "send_agent_prompt");
+      await invokeToolWithParsedInput(tool, {
+        agentId: target.id,
+        prompt: "original",
+        background: true,
+      });
+      const session = client.sessions[0]!;
+      session.setCompacting(true);
+      const checks = session.compactionChecks;
+      const pending = invokeToolWithParsedInput(tool, {
+        agentId: target.id,
+        prompt: "follow up",
+      });
+      const canceled = expect(pending).rejects.toThrow("Queued prompt canceled before delivery");
+      await vi.waitFor(() => expect(session.compactionChecks).toBeGreaterThan(checks));
+      await cancel({ agentManager, agentId: target.id, session });
+      await canceled;
+      expect(session.prompts).toEqual(["original"]);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
 
   it("bounds a blocking queued wait and arms its notification only after delivery", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-compacting-timeout-"));

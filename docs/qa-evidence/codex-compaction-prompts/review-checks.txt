@@ -125,7 +125,7 @@ Exit status: 0
 
 
 
-MCP suite after final implementation edit
+MCP suite after final test-case edit
 Working directory: packages/server
 Command: npx vitest run src/server/agent/mcp-server.test.ts --maxWorkers=1 --bail=1
 Exit status: 0
@@ -136,8 +136,8 @@ Exit status: 0
 
  Test Files  1 passed (1)
       Tests  131 passed (131)
-   Start at  01:19:13
-   Duration  14.70s (transform 2.11s, setup 41ms, import 3.23s, tests 11.30s, environment 0ms)
+   Start at  01:26:36
+   Duration  22.41s (transform 3.51s, setup 44ms, import 5.06s, tests 17.18s, environment 0ms)
 
 
 
@@ -334,7 +334,7 @@ Exit status: 0
 > oxlint
 
 Found 0 warnings and 0 errors.
-Finished in 944ms on 4565 files with 177 rules using 10 threads.
+Finished in 2.1s on 4565 files with 177 rules using 10 threads.
 
 
 Changed-file formatting
@@ -350,3 +350,18 @@ Checking formatting...
 
 All matched files use the correct format.
 Finished in 88ms on 9 files using 10 threads.
+
+
+Second review test-case formatting
+Working directory: .
+Command: npm run format:check:files -- docs/qa-evidence/codex-compaction-prompts/report.md packages/server/src/server/agent/mcp-server.test.ts
+Exit status: 0
+
+
+> paseo@0.11.0-beta.4 format:check:files
+> oxfmt --check docs/qa-evidence/codex-compaction-prompts/report.md packages/server/src/server/agent/mcp-server.test.ts
+
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 246ms on 2 files using 10 threads.
