@@ -225,9 +225,8 @@ function buildAgentManagerSpies() {
   };
   const fetchTimeline: AgentManager["fetchTimeline"] = (agentId, options) =>
     buildTimelineStore(agentId).fetch(agentId, options);
-  const getTimelineCount = vi.fn<AgentManager["getTimelineCount"]>((agentId) =>
-    buildTimelineStore(agentId).getItemCount(agentId),
-  );
+  const getTimelineCount: AgentManager["getTimelineCount"] = (agentId) =>
+    buildTimelineStore(agentId).getItemCount(agentId);
   return {
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn().mockResolvedValue({
@@ -6486,7 +6485,6 @@ describe("agent snapshot MCP serialization", () => {
       }),
     );
     expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalled();
-    expect(spies.agentManager.getTimelineCount).toHaveBeenCalledWith("archived-activity-agent");
     expect(spies.agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
       "archived-activity-agent",
       { broadcast: expect.any(Function) },
@@ -6518,6 +6516,7 @@ describe("agent snapshot MCP serialization", () => {
 
     const content = String(response.structuredContent.content);
     expect(content).toContain("Hello world. How are you?");
+    expect(response.structuredContent.updateCount).toBe(2);
   });
 
   it("get_agent_activity limit=2 returns the last two projected entries whole", async () => {
