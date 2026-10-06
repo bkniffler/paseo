@@ -3122,7 +3122,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agentStorage,
         logger: childLogger,
       });
-      const timeline = agentManager.getTimeline(agentId);
+      const updateCount = agentManager.getTimelineCount(agentId);
       const snapshot = agentManager.getAgent(agentId);
 
       // Display-order pagination stays bounded even when older tool calls receive
@@ -3143,7 +3143,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         content: [],
         structuredContent: ensureValidJson({
           agentId,
-          updateCount: timeline.length,
+          updateCount,
           currentModeId: snapshot?.currentModeId ?? null,
           ...activity,
         }),

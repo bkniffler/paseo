@@ -218,11 +218,16 @@ interface TestDeps {
 
 function buildAgentManagerSpies() {
   const getTimeline = vi.fn<AgentManager["getTimeline"]>().mockReturnValue([]);
-  const fetchTimeline: AgentManager["fetchTimeline"] = (agentId, options) => {
+  const buildTimelineStore = (agentId: string) => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize(agentId, { items: getTimeline(agentId), epoch: `test-${agentId}` });
-    return store.fetch(agentId, options);
+    return store;
   };
+  const fetchTimeline: AgentManager["fetchTimeline"] = (agentId, options) =>
+    buildTimelineStore(agentId).fetch(agentId, options);
+  const getTimelineCount = vi.fn<AgentManager["getTimelineCount"]>((agentId) =>
+    buildTimelineStore(agentId).getItemCount(agentId),
+  );
   return {
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn().mockResolvedValue({
@@ -242,6 +247,7 @@ function buildAgentManagerSpies() {
     getAgent: vi.fn(),
     listAgents: vi.fn().mockReturnValue([]),
     getTimeline,
+    getTimelineCount,
     fetchTimeline,
     resumeAgentFromPersistence: vi.fn(),
     hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
@@ -5706,8 +5712,10 @@ describe("agent snapshot MCP serialization", () => {
       ]);
       expect(compactSnapshot).not.toHaveProperty("availableModes");
       expect(compactSnapshot).not.toHaveProperty("persistence");
-      expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(full).length / 4);
-      expect(JSON.parse(expectSingleTextContent(compact))).toEqual(compact.structuredContent);
+      const compactText = expectSingleTextContent(compact);
+      const fullText = expectSingleTextContent(full);
+      expect(compactText.length).toBeLessThan(fullText.length / 4);
+      expect(JSON.parse(compactText)).toEqual(compact.structuredContent);
       expect(
         z.record(z.string(), z.unknown()).parse(full.structuredContent?.snapshot),
       ).toHaveProperty("availableModes");
@@ -6478,6 +6486,7 @@ describe("agent snapshot MCP serialization", () => {
       }),
     );
     expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalled();
+    expect(spies.agentManager.getTimelineCount).toHaveBeenCalledWith("archived-activity-agent");
     expect(spies.agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
       "archived-activity-agent",
       { broadcast: expect.any(Function) },
